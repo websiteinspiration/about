@@ -1,6 +1,6 @@
 # Sourcegraph website
 
-Test commit
+Test commit 2
 
 This repository contains source code for the Sourcegraph marketing website, ([https://about.sourcegraph.com](https://about.sourcegraph.com)). The site is built using the [GatsbyJS](https://gatsbyjs.org) static site generator.
 
