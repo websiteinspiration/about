@@ -67,9 +67,9 @@ export default class About extends React.Component<any, any> {
                                         <li>Make code review continuous and intelligent</li>
                                         <li>Increase the amount and quality of open-source code</li>
                                     </ul>
-                                    <Link to="/plan" onClick={this.masterPlanClicked}>
+                                    <Link to="/plan">
                                         <button className="btn btn-primary about__plan-btn">
-                                            Read Our Master Plan
+                                            Read our master plan
                                         </button>
                                     </Link>
                                 </div>
@@ -353,10 +353,6 @@ export default class About extends React.Component<any, any> {
                 </div>
             </div>
         )
-    }
-
-    private masterPlanClicked = () => {
-        eventLogger.trackMasterPlanClicked('Footer')
     }
 }
 
