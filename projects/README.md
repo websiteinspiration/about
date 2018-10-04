@@ -1,4 +1,6 @@
-# Usage Guide
+# Sourcegraph product roadmap
+
+> Status: Work in progress. We are in the process of moving our product roadmap here. Not all projects are transferred yet, and the high-level product roadmap has not yet been moved here.
 
 ## Why a Public Project Planning and Blog Post repository?
 
