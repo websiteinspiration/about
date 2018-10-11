@@ -2,7 +2,16 @@
 
 ## Customer questionnaire
 
-TODO
+* Which code host do you use?
+* What is the source of truth for user identity? (E.g., Okta, OneLogin, Google apps, GitHub native
+  login, GitLab native login)
+* How do you log into your code host?
+* How do you (expect to) log into your Sourcegraph instance?
+* What is the source of truth for repository permissions? If not the code host, please describe the
+  setup.
+* Is a user's username on the code host guaranteed to be the same as the username in the identity
+  provider? If not, explain why.
+
 
 ## Solution
 
@@ -97,14 +106,174 @@ type GitLabConnection struct {
     AuthzProvider	bool
     ...
 }
-
-
-TODO
-
 ```
+
+The `AuthzProvider` field, if true, instructs Sourcegraph to treat the code host as the
+authorization source of truth. Note that the actual `AuthzProvider` used will depend on whether or
+not the connection is to an on-prem or cloud code host instance. Some configurations may be
+unsupported initially and Sourcegraph will throw an error on startup in those cases. The "Scenarios"
+section below walks through specific use cases and how they will be supported under the proposed
+model.
+
 
 ### Scenarios
 
-Let's test out the design in a few scenarios:
+#### GitLab on-prem + SAML
 
-#### GitLab + SAML
+Configuration:
+
+```json
+{
+    "auth.providers": [
+        {
+            "type": "saml",
+            "displayName": "My SAML ID provider",
+            "identityProviderMetadataURL": "https://sso.mycompany.com/saml"
+        }
+    ],
+    "gitlab": [
+        {
+            "url": "https://gitlab.mycompany.com",
+            "token": "<GitLab impersonation token>",
+            "authzProvider": true,
+        }
+    ]
+}
+```
+
+* `AuthnProvider.CurrentIdentity` returns the username of the current user, which is the same as the
+  SAML username.
+* `IdentityToAuthzIDMapper.AuthzID` is the identity function (it just returns the username as the
+  AuthzID). This assumes that the GitLab username is the same as the SAML userame.
+* `AuthzProvider.ListRepositories` uses the [GitLab impersonation
+  token](https://docs.gitlab.com/ee/api/#impersonation-tokens) to [list all projects accessible to
+  the username](https://docs.gitlab.com/ee/api/projects.html#list-all-projects).
+
+
+#### GitHub business cloud + SAML
+
+Configuration:
+
+```json
+{
+    "auth.providers": [
+        {
+            "type": "saml",
+            "displayName": "My SAML ID provider",
+            "identityProviderMetadataURL": "https://sso.mycompany.com/saml"
+        }
+    ],
+    "github": [
+        {
+            "url": "https://github.com",
+            "token": "<personal access token with access to all repositories to be indexed by Sourcegraph>",
+    		"authzProvider": true
+        }
+    ]
+}
+```
+
+* `AuthnProvider.CurrentIdentity` returns the username of the current user, which is the same as the
+  SAML username.
+* `IdentityToAuthzIDMapper.AuthzID` is the identity function.
+* `AuthzProvider.ListRepositories` calls the following endpoints to get the list of accessible
+  repositories:
+  * [List user repositories](https://developer.github.com/v3/repos/#list-user-repositories)
+  * [List organization repositories](https://developer.github.com/v3/repos/#list-organization-repositories)
+  * [List user organizations](https://developer.github.com/v3/orgs/#list-user-organizations)
+  
+  Note that this may omit some repositories the user has access to, including repositories
+  accessible to an organization where the user's membership is not public and repositories that a
+  user has been granted access to as an external collaborator. The GitHub API only permits listing
+  all repositories accessible to a user via a request that is authenticated as the user in question.
+  In practice, that means we must obtain an OAuth token for every user. In the case of GitHub
+  business cloud with SAML sign-in, however, it's unclear whether we have a way of obtaining that
+  OAuth token (or if we do, if it would require double sign-in). If we can obtain an OAuth token,
+  then this case reduces to that of vanilla GitHub.com (see below). If not, we will need to resort
+  to the implementation above.
+
+
+#### GitHub.com
+
+In order to support GitHub.com repository permissions, we require that GitHub.com be the sign-in
+mechanism for the Sourcegraph instance. This is necessary to obtain the OAuth token used in the
+GitHub API requests for the list of repositories accessible to a user.
+
+Configuration:
+
+```json
+{
+    "auth.providers": [
+        {
+            "type": "oauth",
+            "displayName": "GitHub.com",
+            "issuer": "https://github.com"
+        }
+    ],
+    "github": [
+        {
+            "url": "https://github.com",
+            "authzProvider": true
+        }
+    ]
+}
+```
+
+* `AuthnProvider.CurrentIdentity` returns the username of the current user, which is the same as the
+  GitHub username.
+* `IdentityToAuthzIDMapper.AuthzID` is the identity function.
+* `AuthzProvider.ListRepositories` calls the [List your
+  repositories](https://developer.github.com/v3/repos/#list-your-repositories) endpoint using the
+  current user's OAuth token.
+
+
+#### GitHub Enterprise + SAML
+
+Configuration:
+
+```json
+{
+    "auth.providers": [
+        {
+            "type": "saml",
+            "displayName": "My SAML ID provider",
+            "identityProviderMetadataURL": "https://sso.mycompany.com/saml"
+        }
+    ],
+    "github": [
+        {
+            "url": "https://github.mycompany.com",
+            "token": "<GitHub Enterprise impersonation token>",
+            "authzProvider": true
+        }
+    ]
+}
+```
+
+* `AuthnProvider.CurrentIdentity` returns the username of the current user, which is the same as the
+  SAML username.
+* `IdentityToAuthzIDMapper.AuthzID` is the identity function. This assumes that the GitHub username
+  is the same as the SAML userame.
+* `AuthzProvider.ListRepositories` uses the [GitHub Enterprise impersonation
+  token](https://developer.github.com/enterprise/2.14/v3/enterprise-admin/users/#create-an-impersonation-oauth-token)
+  to [list all repositories accessible to the
+  user](https://developer.github.com/v3/repos/#list-your-repositories).
+
+
+#### Other situations
+
+This section summarizes implementation notes for other `AuthzProvider` scenarios.
+
+- Bitbucket Server
+  - Does not yet support impersonation tokens, inquiry posted here: https://community.developer.atlassian.com/t/any-plans-to-support-impersonation-tokens/23062
+  - If we add support now, we'll have to use techniques similar to what's described in the GitHub
+    business cloud scenario.
+- Gitolite: Gitolite permissions can be fetched directly via the SSH API.
+- AWS CodeDeploy
+  - No impersonation token, but seems like it should be possible through IAM + CodeCommit API.
+- GitHub.com, Bitbucket.org, GitLab.com
+  - No impersonation token.
+  - Each of these is an OAuth provider, so we would require login to Sourcegraph be done via OAuth
+    through the code host.
+- LDAP
+  - Need more specific customer use case feedback to move forward here.
